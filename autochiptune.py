@@ -30,9 +30,10 @@ fmin, fmax = librosa.midi_to_hz([MIDI_MIN, MIDI_MAX])
 n_fft = 2048
 hop_length = 512
 
-BASS_MIN = 24 - MIDI_MIN
-TREBLE_MIN = 60 - MIDI_MIN
+TREBLE_MIN = 48 - MIDI_MIN
 TREBLE_MAX = 96 - MIDI_MIN
+BASS_MIN = 24 - MIDI_MIN
+BASS_MAX = TREBLE_MIN - 12
 
 
 def triangle(*args, **kwargs):
@@ -145,7 +146,7 @@ def match_zc(queries, zc_mask, my_f, sr):
     return output.reshape(queries.shape)
 
 
-def peakgram(C, max_peaks=1, note_search=12):
+def peakgram(C, max_peaks=1, note_search=8):
     '''Compute spectrogram column-wise peaks subject to constraints'''
 
     mask = np.zeros_like(C)
@@ -287,7 +288,7 @@ def autochip(input_file=None, output_file=None, stereo=False):
     print 'Synthesizing triangles...'
     y_bass = get_wav(cq,
                      nmin=BASS_MIN,
-                     nmax=TREBLE_MIN,
+                     nmax=BASS_MAX,
                      width=7,
                      wave=nes_triangle,
                      max_peaks=1,
