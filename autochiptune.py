@@ -57,7 +57,7 @@ def nes_triangle(*args, **kwargs):
 def noise(seq):
     '''Synthesize white noise'''
     v = np.random.randn(len(seq))
-    v = v / v.max()
+    v = librosa.util.normalize(v)
 
     return 2 * v - 1.
 
@@ -110,13 +110,16 @@ def synthesize(beats, piano_roll, fmin=0, bins_per_octave=12,
         if not active_bins[n * bins_per_semi + first_bin]:
             continue
 
-        sine = wave(freq * stream)
+        my_f = freq * stream
+
+        sine = wave(my_f)
 
         # Align beat timings to zero crossings of sine
-#         zc = np.nonzero(librosa.zero_crossings(sine))[-1]
-
+        zc_mask = librosa.zero_crossings(sine)
+#         zc = np.nonzero(zc_mask)[-1]
 #         beat_f = zc[librosa.util.match_events(beat_intervals, zc)]
-        beat_f = beat_intervals
+
+        beat_f = match_zc(beat_intervals, zc_mask, freq * correction, sr)
 
         # Mask out this frequency wherever it's inactive
         for m, (start, end) in enumerate(beat_f):
@@ -126,6 +129,25 @@ def synthesize(beats, piano_roll, fmin=0, bins_per_octave=12,
 
     output = librosa.util.normalize(output)
     return output, sr
+
+
+def match_zc(queries, zc_mask, my_f, sr):
+
+    # return queries
+
+    # For each query, bound define a search range
+    window = int(np.ceil(sr / my_f))
+
+    output = np.empty(queries.size, dtype=int)
+
+    for i, q in enumerate(queries.ravel()):
+        s = np.maximum(0, q - window)
+        t = np.minimum(len(zc_mask), q + window)
+
+        vals = s + np.flatnonzero(zc_mask[s:t])
+        output[i] = vals[np.argmin(np.abs(q - vals))]
+
+    return output.reshape(queries.shape)
 
 
 def peakgram(C, max_peaks=1, note_search=12):
@@ -258,7 +280,7 @@ def process_arguments(args):
 def autochip(input_file=None, output_file=None, stereo=False):
 
     print 'Processing {:s}'.format(os.path.basename(input_file))
-    y, cq, P = process_audio(input_file, duration=60)
+    y, cq, P = process_audio(input_file)
 
     print 'Synthesizing squares...'
     y_treb = get_wav(cq,
