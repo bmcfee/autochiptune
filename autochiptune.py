@@ -22,6 +22,18 @@ import functools
 import warnings
 warnings.filterwarnings("ignore")
 
+# MAGIC NUMBERS
+sr = 22050
+MIDI_MIN = 12
+MIDI_MAX = 120
+fmin, fmax = librosa.midi_to_hz([MIDI_MIN, MIDI_MAX])
+n_fft = 2048
+hop_length = 512
+
+BASS_MIN = 24 - MIDI_MIN
+TREBLE_MIN = 60 - MIDI_MIN
+TREBLE_MAX = 96 - MIDI_MIN
+
 
 def triangle(*args, **kwargs):
     '''Synthesize a triangle wave'''
@@ -101,8 +113,10 @@ def synthesize(beats, piano_roll, fmin=0, bins_per_octave=12,
         sine = wave(freq * stream)
 
         # Align beat timings to zero crossings of sine
-        zc = np.nonzero(librosa.zero_crossings(sine))[-1]
-        beat_f = zc[librosa.util.match_events(beat_intervals, zc)]
+#         zc = np.nonzero(librosa.zero_crossings(sine))[-1]
+
+#         beat_f = zc[librosa.util.match_events(beat_intervals, zc)]
+        beat_f = beat_intervals
 
         # Mask out this frequency wherever it's inactive
         for m, (start, end) in enumerate(beat_f):
@@ -157,37 +171,24 @@ def peakgram(C, max_peaks=1, note_search=12):
     return mask
 
 
-# MAGIC NUMBERS
-sr = 22050
-MIDI_MIN = 12
-MIDI_MAX = 120
-fmin, fmax = librosa.midi_to_hz([MIDI_MIN, MIDI_MAX])
-n_fft = 2048
-hop_length = 512
-
-BASS_MIN = 24 - MIDI_MIN
-TREBLE_MIN = 60 - MIDI_MIN
-TREBLE_MAX = 96 - MIDI_MIN
-
-
 def process_audio(*args, **kwargs):
-    
+    '''load the audio, do feature extraction'''
+
     y, sr = librosa.load(*args, **kwargs)
-    
+
     # Get the harmonic and percussive components
     y_harm, y_perc = librosa.effects.hpss(y)
-    
+
     # compute CQT
     cq = librosa.cqt(y_harm, sr, fmin=fmin, n_bins=108, hop_length=hop_length)
-    
+
     # Trim to match cq and P shape
-    
     P = np.abs(librosa.stft(y_perc, n_fft=n_fft, hop_length=hop_length))
-    
+
     duration = min(P.shape[1], cq.shape[1])
-    P = np.abs(P[:,:duration])
-    cq = np.abs(cq[:,:duration])
-    
+    P = librosa.util.fix_length(P, duration, axis=1)
+    cq = librosa.util.fix_length(cq, duration, axis=1)
+
     return y, cq, P
 
 
@@ -248,7 +249,6 @@ def process_arguments(args):
 
     parser.add_argument('-s', '--stereo',
                         action='store_true',
-                        type=bool,
                         default=False,
                         help='Mix original and synthesized tracks in stereo')
 
@@ -258,7 +258,7 @@ def process_arguments(args):
 def autochip(input_file=None, output_file=None, stereo=False):
 
     print 'Processing {:s}'.format(os.path.basename(input_file))
-    y, cq, P = process_audio(input_file)
+    y, cq, P = process_audio(input_file, duration=60)
 
     print 'Synthesizing squares...'
     y_treb = get_wav(cq,
