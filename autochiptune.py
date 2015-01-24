@@ -55,9 +55,8 @@ def nes_triangle(*args, **kwargs):
 
 
 def noise(seq):
-    '''Synthesize white noise'''
-    v = np.random.randn(len(seq))
-    v = librosa.util.normalize(v)
+    '''Synthesize binary noise'''
+    v = np.random.randint(0, 2, size=(len(seq),))
 
     return 2 * v - 1.
 
@@ -116,8 +115,6 @@ def synthesize(beats, piano_roll, fmin=0, bins_per_octave=12,
 
         # Align beat timings to zero crossings of sine
         zc_mask = librosa.zero_crossings(sine)
-#         zc = np.nonzero(zc_mask)[-1]
-#         beat_f = zc[librosa.util.match_events(beat_intervals, zc)]
 
         beat_f = match_zc(beat_intervals, zc_mask, freq * correction, sr)
 
@@ -132,8 +129,6 @@ def synthesize(beats, piano_roll, fmin=0, bins_per_octave=12,
 
 
 def match_zc(queries, zc_mask, my_f, sr):
-
-    # return queries
 
     # For each query, bound define a search range
     window = int(np.ceil(sr / my_f))
@@ -239,21 +234,20 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
 
 
 def get_drum_wav(P, width=9, n=None):
-    
+
     # Compute volume shaper
-    v = np.mean(P / P.max(), axis=0)
-    v = v.reshape((1, -1))
+    v = np.mean(P / P.max(), axis=0, keepdims=True)
     v = librosa.util.medfilt(v, kernel_size=(1, width))
-    v = v / v.max()
-    
-    wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[1]), 
-                                                hop_length=hop_length), 
-                             v, 
-                             fmin=librosa.midi_to_hz(0), 
-                             bins_per_octave=12, 
-                             wave=noise,
-                             n=n)[0]
-    
+    v = librosa.util.normalize(v)
+
+    wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[1]),
+                                               hop_length=hop_length),
+                     v,
+                     fmin=librosa.midi_to_hz(0),
+                     bins_per_octave=12,
+                     wave=noise,
+                     n=n)[0]
+
     return wav
 
 
