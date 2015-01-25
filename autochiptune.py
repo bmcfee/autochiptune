@@ -30,10 +30,10 @@ fmin, fmax = librosa.midi_to_hz([MIDI_MIN, MIDI_MAX])
 n_fft = 2048
 hop_length = 512
 
-TREBLE_MIN = 48 - MIDI_MIN
-TREBLE_MAX = 96 - MIDI_MIN
+TREBLE_MIN = 60 - MIDI_MIN
+TREBLE_MAX = 108 - MIDI_MIN
 BASS_MIN = 24 - MIDI_MIN
-BASS_MAX = TREBLE_MIN - 12
+BASS_MAX = TREBLE_MIN + 12
 
 
 def triangle(*args, **kwargs):
@@ -201,47 +201,47 @@ def process_audio(*args, **kwargs):
     cq = librosa.cqt(y_harm, sr, fmin=fmin, n_bins=108, hop_length=hop_length)
 
     # Trim to match cq and P shape
-    P = np.abs(librosa.stft(y_perc, n_fft=n_fft, hop_length=hop_length))
-    P /= librosa.feature.rms(y=y, hop_length=hop_length).max()
+    P = (librosa.feature.rms(y=y_perc, hop_length=hop_length)
+         / librosa.feature.rms(y=y, hop_length=hop_length))
 
-    duration = min(P.shape[1], cq.shape[1])
-    P = librosa.util.fix_length(P, duration, axis=1)
-    cq = librosa.util.fix_length(cq, duration, axis=1)
+    P[~np.isfinite(P)] = 0.0
+
+    duration = min(P.shape[-1], cq.shape[-1])
+    P = librosa.util.fix_length(P, duration, axis=-1)
+    cq = librosa.util.fix_length(cq, duration, axis=-1)
 
     return y, cq, P
 
 
 def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
-    
+
     # Slice down to the bass range
     cq = cq[nmin:nmax]
-    
-    cq_weighted = librosa.logamplitude(cq**2, ref_power=np.max, top_db=40.0)
-    
+
     # Pick peaks at each time
-    mask = peakgram(cq_weighted, max_peaks=max_peaks)
-    
+    mask = peakgram(librosa.logamplitude(cq**2, ref_power=np.max),
+                    max_peaks=max_peaks)
+
     # Smooth in time
     mask = librosa.util.medfilt(mask, kernel_size=(1, width))
 
-    wav = synthesize(librosa.frames_to_samples(np.arange(cq.shape[1]), 
-                                                hop_length=hop_length), 
-                             mask * cq**(1./3), 
-                             fmin=librosa.midi_to_hz(nmin + MIDI_MIN), 
-                             bins_per_octave=12,
-                             wave=wave,
-                             n=n)[0]
-    
+    wav = synthesize(librosa.frames_to_samples(np.arange(cq.shape[-1]),
+                                               hop_length=hop_length),
+                     mask * cq**(1./3),
+                     fmin=librosa.midi_to_hz(nmin + MIDI_MIN),
+                     bins_per_octave=12,
+                     wave=wave,
+                     n=n)[0]
+
     return wav
 
 
-def get_drum_wav(P, width=9, n=None):
+def get_drum_wav(percussion, width=9, n=None):
 
     # Compute volume shaper
-    v = np.mean(P, axis=0, keepdims=True)
-    v = librosa.util.medfilt(v, kernel_size=(1, width))
+    v = librosa.util.medfilt(percussion, kernel_size=(1, width))
 
-    wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[1]),
+    wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[-1]),
                                                hop_length=hop_length),
                      v,
                      fmin=librosa.midi_to_hz(0),
@@ -275,7 +275,7 @@ def process_arguments(args):
 def autochip(input_file=None, output_file=None, stereo=False):
 
     print 'Processing {:s}'.format(os.path.basename(input_file))
-    y, cq, P = process_audio(input_file)
+    y, cq, percussion = process_audio(input_file)
 
     print 'Synthesizing squares...'
     y_treb = get_wav(cq,
@@ -295,7 +295,7 @@ def autochip(input_file=None, output_file=None, stereo=False):
                      n=len(y))
 
     print 'Synthesizing drums...'
-    y_drum = get_drum_wav(P, width=3, n=len(y))
+    y_drum = get_drum_wav(percussion, width=9, n=len(y))
 
     print 'Mixing... '
     y_chip = librosa.util.normalize(0.25 * y_treb +
