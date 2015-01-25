@@ -202,6 +202,7 @@ def process_audio(*args, **kwargs):
 
     # Trim to match cq and P shape
     P = np.abs(librosa.stft(y_perc, n_fft=n_fft, hop_length=hop_length))
+    P /= librosa.feature.rms(y=y, hop_length=hop_length).max()
 
     duration = min(P.shape[1], cq.shape[1])
     P = librosa.util.fix_length(P, duration, axis=1)
@@ -237,9 +238,8 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
 def get_drum_wav(P, width=9, n=None):
 
     # Compute volume shaper
-    v = np.mean(P / P.max(), axis=0, keepdims=True)
+    v = np.mean(P, axis=0, keepdims=True)
     v = librosa.util.medfilt(v, kernel_size=(1, width))
-    v = librosa.util.normalize(v)
 
     wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[1]),
                                                hop_length=hop_length),
