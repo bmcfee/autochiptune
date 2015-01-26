@@ -17,6 +17,7 @@ import os
 import librosa
 import numpy as np
 import scipy.signal
+import scipy.ndimage
 import functools
 
 import warnings
@@ -227,7 +228,9 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
                     max_peaks=max_peaks)
 
     # Smooth in time
-    mask = librosa.util.medfilt(mask, kernel_size=(1, width))
+    mask = scipy.ndimage.median_filter(mask,
+                                       size=(1, width),
+                                       mode='mirror')
 
     # resynthesize with some magnitude compression
     wav = synthesize(librosa.frames_to_samples(np.arange(cq.shape[-1]),
@@ -244,7 +247,9 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
 def get_drum_wav(percussion, width=9, n=None):
 
     # Compute volume shaper
-    v = librosa.util.medfilt(percussion, kernel_size=(1, width))
+    v = scipy.ndimage.median_filter(percussion,
+                                    size=(1, width),
+                                    mode='mirror')
 
     wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[-1]),
                                                hop_length=hop_length),
