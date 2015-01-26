@@ -31,7 +31,7 @@ n_fft = 2048
 hop_length = 512
 
 TREBLE_MIN = 60 - MIDI_MIN
-TREBLE_MAX = 108 - MIDI_MIN
+TREBLE_MAX = 96 - MIDI_MIN
 BASS_MIN = 24 - MIDI_MIN
 BASS_MAX = TREBLE_MIN + 12
 
@@ -210,7 +210,7 @@ def process_audio(*args, **kwargs):
     P = librosa.util.fix_length(P, duration, axis=-1)
     cq = librosa.util.fix_length(cq, duration, axis=-1)
 
-    return y, cq, P
+    return y, cq, P**2
 
 
 def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
@@ -218,13 +218,18 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
     # Slice down to the bass range
     cq = cq[nmin:nmax]
 
+    # Apply perceptual weighting to the masking operator
+    frequencies = librosa.cqt_frequencies(nmax - nmin, nmin + MIDI_MIN)
+
     # Pick peaks at each time
-    mask = peakgram(librosa.logamplitude(cq**2, ref_power=np.max),
+    mask = peakgram(librosa.perceptual_weighting(cq**2, frequencies, top_db=40,
+                                                 ref_power=np.max),
                     max_peaks=max_peaks)
 
     # Smooth in time
     mask = librosa.util.medfilt(mask, kernel_size=(1, width))
 
+    # resynthesize with some magnitude compression
     wav = synthesize(librosa.frames_to_samples(np.arange(cq.shape[-1]),
                                                hop_length=hop_length),
                      mask * cq**(1./3),
@@ -281,7 +286,6 @@ def autochip(input_file=None, output_file=None, stereo=False):
     y_treb = get_wav(cq,
                      nmin=TREBLE_MIN,
                      nmax=TREBLE_MAX,
-                     width=7,
                      max_peaks=2,
                      n=len(y))
 
@@ -289,17 +293,16 @@ def autochip(input_file=None, output_file=None, stereo=False):
     y_bass = get_wav(cq,
                      nmin=BASS_MIN,
                      nmax=BASS_MAX,
-                     width=7,
                      wave=nes_triangle,
                      max_peaks=1,
                      n=len(y))
 
     print 'Synthesizing drums...'
-    y_drum = get_drum_wav(percussion, width=9, n=len(y))
+    y_drum = get_drum_wav(percussion, n=len(y))
 
     print 'Mixing... '
-    y_chip = librosa.util.normalize(0.25 * y_treb +
-                                    0.25 * y_bass +
+    y_chip = librosa.util.normalize(0.5 * y_treb +
+                                    0.5 * y_bass +
                                     0.1 * y_drum)
 
     if stereo:
