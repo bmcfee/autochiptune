@@ -6,9 +6,7 @@
 # 1. Percussives => peak pick => noise generator
 # 1. Harmonics => CQT
 # 1. CQT => Bass range => peak pick => triangle generator
-#   * bass: pick the peak note within [24, 60]
 # 1. CQT => Treble range => peak pick => harmony => pulse generator
-#   * mids: 2 peaks within [60, 96]
 
 import argparse
 import sys
@@ -25,14 +23,14 @@ warnings.filterwarnings("ignore")
 
 # MAGIC NUMBERS
 sr = 22050
-MIDI_MIN = 12
-MIDI_MAX = 120
-fmin, fmax = librosa.midi_to_hz([MIDI_MIN, MIDI_MAX])
+MIDI_MIN = 18
+MIDI_MAX = 96
+fmin = librosa.midi_to_hz(MIDI_MIN)
 n_fft = 2048
 hop_length = 512
 
-TREBLE_MIN = 60 - MIDI_MIN
-TREBLE_MAX = 96 - MIDI_MIN
+TREBLE_MIN = 54 - MIDI_MIN
+TREBLE_MAX = MIDI_MAX - MIDI_MIN
 BASS_MIN = 24 - MIDI_MIN
 BASS_MAX = TREBLE_MIN + 12
 
@@ -153,7 +151,7 @@ def peakgram(C, max_peaks=1, note_search=8):
     mask = np.zeros_like(C)
 
     for t in range(C.shape[1]):
-        if t == 0:
+        if t == 0 or not np.any(mask[:, t-1]):
             col = C[:, t]
         else:
             col = np.min(C[:, t]) * np.ones(C.shape[0])
@@ -172,7 +170,7 @@ def peakgram(C, max_peaks=1, note_search=8):
 
         # Don't look for 2nds or 11ths
         # Compute max over an octave range, +- 3 semitones
-        peaks = librosa.util.peak_pick(col, 3, 3, 6, 6, 1./sum(col), 3)
+        peaks = librosa.util.peak_pick(col, 3, 3, 6, 6, 1e-2, 3)
 
         if len(peaks) == 0:
             continue
@@ -190,6 +188,14 @@ def peakgram(C, max_peaks=1, note_search=8):
     return mask
 
 
+def dft_normalize(c):
+
+    D = np.fft.rfft(c, axis=0)
+    D = D / (1e-8 + np.mean(np.abs(D)**2, axis=1, keepdims=True)**0.5)
+    cinv = np.fft.irfft(D, axis=0)
+    return np.clip(cinv, 0, None)
+
+
 def process_audio(*args, **kwargs):
     '''load the audio, do feature extraction'''
 
@@ -199,11 +205,13 @@ def process_audio(*args, **kwargs):
     y_harm, y_perc = librosa.effects.hpss(y)
 
     # compute CQT
-    cq = librosa.cqt(y_harm, sr, fmin=fmin, n_bins=108, hop_length=hop_length)
+    cq = librosa.cqt(y_harm, sr, fmin=fmin, n_bins=MIDI_MAX-MIDI_MIN, hop_length=hop_length)
+
+    cq = dft_normalize(cq)
 
     # Trim to match cq and P shape
-    P = (librosa.feature.rms(y=y_perc, hop_length=hop_length)
-         / librosa.feature.rms(y=y, hop_length=hop_length))
+    P = (librosa.feature.rmse(y=y_perc, hop_length=hop_length)
+         / librosa.feature.rmse(y=y, hop_length=hop_length))
 
     P[~np.isfinite(P)] = 0.0
 
@@ -214,17 +222,13 @@ def process_audio(*args, **kwargs):
     return y, cq, P**2
 
 
-def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
+def get_wav(cq, nmin=60, nmax=120, width=5, max_peaks=1, wave=None, n=None):
 
     # Slice down to the bass range
     cq = cq[nmin:nmax]
 
-    # Apply perceptual weighting to the masking operator
-    frequencies = librosa.cqt_frequencies(nmax - nmin, nmin + MIDI_MIN)
-
     # Pick peaks at each time
-    mask = peakgram(librosa.perceptual_weighting(cq**2, frequencies, top_db=40,
-                                                 ref_power=np.max),
+    mask = peakgram(librosa.logamplitude(cq**2, top_db=60, ref_power=np.max),
                     max_peaks=max_peaks)
 
     # Smooth in time
@@ -244,12 +248,15 @@ def get_wav(cq, nmin=60, nmax=120, width=9, max_peaks=1, wave=None, n=None):
     return wav
 
 
-def get_drum_wav(percussion, width=9, n=None):
+def get_drum_wav(percussion, width=5, n=None):
 
     # Compute volume shaper
+    percussion = librosa.util.normalize(percussion.ravel())
+
     v = scipy.ndimage.median_filter(percussion,
-                                    size=(1, width),
+                                    width,
                                     mode='mirror')
+    v = np.atleast_2d(v)
 
     wav = synthesize(librosa.frames_to_samples(np.arange(v.shape[-1]),
                                                hop_length=hop_length),
